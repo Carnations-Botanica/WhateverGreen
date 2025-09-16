@@ -41,6 +41,8 @@ static const char *idRadeonX6000New {"com.apple.kext.AMDRadeonX6000"};
 static const char *idRadeonX3000Old {"com.apple.AMDRadeonX3000"};
 static const char *idRadeonX4000Old {"com.apple.AMDRadeonX4000"};
 
+static KernelPatcher::KextInfo kextIOGraphicsFamily
+{ "com.apple.iokit.IOGraphicsFamily", nullptr, 0, {}, {}, KernelPatcher::KextInfo::Unloaded };
 static KernelPatcher::KextInfo kextRadeonFramebuffer
 { "com.apple.kext.AMDFramebuffer", pathFramebuffer, arrsize(pathFramebuffer), {}, {}, KernelPatcher::KextInfo::Unloaded };
 static KernelPatcher::KextInfo kextRadeonLegacyFramebuffer
@@ -79,6 +81,16 @@ static const char *powerGatingFlags[] {
 	"CAIL_DisableAcpPowerGating",
 	"CAIL_DisableSAMUPowerGating"
 };
+
+/**
+ *  This function will be called by Lilu ONLY when IOGraphicsFamily has loaded.
+ *  Its only job is to then activate our patches for AMDSupport.
+ */
+static void onIOGraphicsLoad(void *user, KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
+	if (RAD *rad = static_cast<RAD *>(user)) {
+		lilu.onKextLoadForce(&kextRadeonSupport);
+	}
+}
 
 RAD *RAD::callbackRAD;
 
@@ -119,7 +131,13 @@ void RAD::init(bool enableNavi10Bkl) {
 	forceCodecInfo = checkKernelArgument("-radcodec");
 
 	// To support overriding connectors and -radvesa mode we need to patch AMDSupport.
-	lilu.onKextLoadForce(&kextRadeonSupport);
+    if (getKernelVersion() >= KernelVersion::Tahoe) {
+    	// For macOS Tahoe (Kernel 25) and newer, we must wait for IOGraphicsFamily to load before patching AMDSupport.
+        lilu.onKextLoad(&kextIOGraphicsFamily, 1, onIOGraphicsLoad, this);
+    } else {
+        lilu.onKextLoadForce(&kextRadeonSupport);
+    }
+
 	// Mojave dropped legacy GPU support (5xxx and 6xxx).
 	if (getKernelVersion() < KernelVersion::Mojave)
 		lilu.onKextLoadForce(&kextRadeonLegacySupport);
